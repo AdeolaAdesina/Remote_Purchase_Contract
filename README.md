@@ -180,3 +180,235 @@ Now we will create a function to pay our seller once the conditions of the contr
 Only the seller is going to be able to invoke this function(so we'll need a modifier)
 We'll check the state and make sure it's in release mode.
 To prevent re-entrancy attacks, update state first.
+
+
+```
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.11;
+
+contract PurchaseAgreement {
+    uint public value;
+    address payable public seller;
+    address payable public buyer;
+
+    enum State { Created, Locked, Release, Inactive }
+    State public state;
+
+    constructor() payable {
+        seller = payable(msg.sender);
+        value = msg.value / 2;
+    }
+
+    /// The function cannot be called at this state
+    error InvalidState();
+
+    modifier inState(State state_) {
+        if(state != state_) {
+            revert InvalidState();
+        }
+        _; //this executes the rest of the function
+    }
+
+    function confirmPurchase() external inState(State.Created) payable {
+        require(msg.value == (2 * value), "Please send in 2x the purchase amount");
+        buyer = payable(msg.sender);
+        state = State.Locked;
+    }
+
+    ///Only a buyer can call this function
+    error OnlyBuyer();
+
+    modifier OnlyBuyerCan() {
+        if (msg.sender != buyer) {
+            revert OnlyBuyer();
+        }
+        _;
+    }
+
+    function confirmReceived() external OnlyBuyerCan inState(State.Locked) {
+        state = State.Release;
+        buyer.transfer(value);
+    }
+
+    ///Only a seller can call this function
+    error OnlySeller();
+
+    modifier OnlySellerCan() {
+        if (msg.sender != seller) {
+            revert OnlySeller();
+        }
+        _;
+    }
+
+    function paySeller() external OnlySellerCan inState(State.Release) {
+        state = State.Inactive;
+
+        seller.transfer(value);
+    }
+}
+```
+
+Now we will create an abort function,
+Only the seller can abort the transaction,since he's the owner of the money sent.
+Again, we will update state first.
+
+```
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.11;
+
+contract PurchaseAgreement {
+    uint public value;
+    address payable public seller;
+    address payable public buyer;
+
+    enum State { Created, Locked, Release, Inactive }
+    State public state;
+
+    constructor() payable {
+        seller = payable(msg.sender);
+        value = msg.value / 2;
+    }
+
+    /// The function cannot be called at this state
+    error InvalidState();
+
+    modifier inState(State state_) {
+        if(state != state_) {
+            revert InvalidState();
+        }
+        _; //this executes the rest of the function
+    }
+
+    function confirmPurchase() external inState(State.Created) payable {
+        require(msg.value == (2 * value), "Please send in 2x the purchase amount");
+        buyer = payable(msg.sender);
+        state = State.Locked;
+    }
+
+    ///Only a buyer can call this function
+    error OnlyBuyer();
+
+    modifier OnlyBuyerCan() {
+        if (msg.sender != buyer) {
+            revert OnlyBuyer();
+        }
+        _;
+    }
+
+    function confirmReceived() external OnlyBuyerCan inState(State.Locked) {
+        state = State.Release;
+        buyer.transfer(value);
+    }
+
+    ///Only a seller can call this function
+    error OnlySeller();
+
+    modifier OnlySellerCan() {
+        if (msg.sender != seller) {
+            revert OnlySeller();
+        }
+        _;
+    }
+
+    function paySeller() external OnlySellerCan inState(State.Release) {
+        state = State.Inactive;
+
+        seller.transfer(value);
+    }
+
+    function abort() external OnlySellerCan inState(State.Created) {
+        state = State.Created;
+        seller.transfer(address(this).balance);
+    }
+}
+```
+
+
+Now let's deploy and test the smart contract.
+
+
+Deploy the smart contract as Seller with 4 ether, this will set the state to created.
+
+Now change the address to buyer and confirmPurchase() with 4 ether(this will give the contract address a balance of 8 ether), this will set the state to Locked.
+
+Now let's imagine the seller has shipped the item to the buyer, the buyer will confirmReceived(), this sends 2 ether to the buyer. this will set the state to released.
+
+
+Addition: I added an extra enum named "Returned", so the seller can abort the transation and have his ether returned.
+
+Final code:
+
+```
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.11;
+
+contract PurchaseAgreement {
+    uint public value;
+    address payable public seller;
+    address payable public buyer;
+
+    enum State { Created, Locked, Release, Inactive, Returned }
+    State public state;
+
+    constructor() payable {
+        seller = payable(msg.sender);
+        value = msg.value / 2;
+    }
+
+    /// The function cannot be called at this state
+    error InvalidState();
+
+    modifier inState(State state_) {
+        if(state != state_) {
+            revert InvalidState();
+        }
+        _; //this executes the rest of the function
+    }
+
+    function confirmPurchase() external inState(State.Created) payable {
+        require(msg.value == (2 * value), "Please send in 2x the purchase amount");
+        buyer = payable(msg.sender);
+        state = State.Locked;
+    }
+
+    ///Only a buyer can call this function
+    error OnlyBuyer();
+
+    modifier OnlyBuyerCan() {
+        if (msg.sender != buyer) {
+            revert OnlyBuyer();
+        }
+        _;
+    }
+
+    function confirmReceived() external OnlyBuyerCan inState(State.Locked) {
+        state = State.Release;
+        buyer.transfer(value);
+    }
+
+    ///Only a seller can call this function
+    error OnlySeller();
+
+    modifier OnlySellerCan() {
+        if (msg.sender != seller) {
+            revert OnlySeller();
+        }
+        _;
+    }
+
+    function paySeller() external OnlySellerCan inState(State.Release) {
+        state = State.Inactive;
+
+        seller.transfer(value);
+    }
+
+    function abort() external OnlySellerCan inState(State.Inactive) {
+        state = State.Returned;
+        seller.transfer(address(this).balance);
+    }
+}
+```
+
